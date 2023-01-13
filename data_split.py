@@ -1,15 +1,14 @@
 import nibabel as nib
 import numpy as np
 import os
-import h5py
 import random
-import cv2
 import copy
-from matplotlib import pyplot as plt
 from PIL import Image
 import time
+from collections import Counter
+from matplotlib import pyplot as plt
 
-def nii_to_h5(path_nii,path_save,ratio=0.8):
+def nii_to_h5(path_nii, path_save, ratio=0.8):
     data = []
     label = []
     ori = []
@@ -21,19 +20,19 @@ def nii_to_h5(path_nii,path_save,ratio=0.8):
         if dir_site[-3:] == 'csv':
             continue
 
-        list_patients = os.listdir(path_nii+'/'+dir_site)
+        list_patients = os.listdir(path_nii + '/' + dir_site)
         for dir_patients in list_patients:
             for t0n in ['/t01/', '/t02/']:
                 try:
-                    location = path_nii+'/' + dir_site + '/' + dir_patients + t0n
+                    location = path_nii + '/' + dir_site + '/' + dir_patients + t0n
                     location_all = os.listdir(location)
                     for i in range(len(location_all)):
-                        location_all[i] = location+location_all[i]
+                        location_all[i] = location + location_all[i]
                     list_data.append(location_all)
                 except:
                     continue
-
     random.shuffle(list_data)
+
     for num, data_dir in enumerate(list_data):
         for i, deface in enumerate(data_dir):
             if deface.find('deface') != -1:
@@ -48,15 +47,17 @@ def nii_to_h5(path_nii,path_save,ratio=0.8):
                 del list_data[num][i]
                 break
 
-        label_merge = np.zeros_like(ori)
+        label_merge = []
         for i, dir_data in enumerate(list_data[num]):
             img = nib.load(dir_data)
             img = np.array(img.get_fdata())
             img = img.transpose((2, 1, 0))
-            label_merge = label_merge + img
-        
-        print(str(num)+'/'+str(len(list_data)),'max=',str(ori.max()),'min=',str(ori.min()))
-        if num == 0 or num == int(ratio * len(list_data)):
+            img[img>0]=1
+            label_merge.append(img)
+        label_merge = np.sum(label_merge, axis=0)
+        label_merge[label_merge>1] = 1
+        print(str(num) + '/' + str(len(list_data)), 'max=', str(ori.max()), 'min=', str(ori.min()))
+        if num == 0 or num == int(ratio * len(list_data)): #or num == int(0.9 * len(list_data)):
             data = copy.deepcopy(ori)
             label = copy.deepcopy(label_merge)
         else:
@@ -66,60 +67,32 @@ def nii_to_h5(path_nii,path_save,ratio=0.8):
         if num == int(ratio * len(list_data))-1:
             print('saving train set...')
             data = np.array(data, dtype=float)
-            label = np.array(label, dtype=bool)
-            #'''
-            file = h5py.File(path_save + '/train_' + str(ratio), 'w')
-            file.create_dataset('data', data=data)
-            file.create_dataset('label', data=label)
-            file.close()
+            label = np.array(label, dtype=int)
+            
+            np.save(path_save + '/train_' + str(ratio)+'data', data)
+            np.save(path_save + '/train_' + str(ratio) + 'label', label)
             data = []
             label = []
             print('Finished!')
 
-        elif num == len(list_data)-1:
+        
+        elif num == len(list_data) - 1:
             print('saving test set...')
             data = np.array(data, dtype=float)
-            label = np.array(label, dtype=bool)
-            file = h5py.File(path_save + '/test_' + str(ratio), 'w')
-            file.create_dataset('data', data=data)
-            file.create_dataset('label', data=label)
-            file.close()
+            label = np.array(label, dtype=int)
+            np.save(path_save + '/test_' + str(ratio) + 'data', data)
+            np.save(path_save + '/test_' + str(ratio) + 'label', label)
             print('Finished!')
+    
     return ori_max, ori_min
-            #'''
+    # '''
 
-def data_adjust(max, min, h5_path, ratio=0.8):
 
-    file = h5py.File(h5_path + '/test_' + str(ratio))
-    data = file['data']
-    label = file['label']
-    data = data - min
-    data = data / max
-    data = data*255
 
-    file_adjust = h5py.File(h5_path + '/detection/test', 'w')
-    file_adjust.create_dataset('data', data=data)
-    file_adjust.create_dataset('label', data=label)
-    file.close()
-    file_adjust.close()
+def load_h5(path_data,path_label, size=None, test_programme=None, only=False):
 
-    file = h5py.File(h5_path + '/train_' + str(ratio))
-    data = file['data']
-    label = file['label']
-    data = data - min
-    data = data / max
-    data = data*255
-
-    file_adjust = h5py.File(h5_path + '/detection/train', 'w')
-    file_adjust.create_dataset('data', data=data)
-    file_adjust.create_dataset('label', data=label)
-    file.close()
-    file_adjust.close()
-
-def load_h5(path_h5, shuffle=False, size=None, test_programme=None, only=False):
-    h5 = h5py.File(path_h5)
-    data = h5['data'][:]
-    label = h5['label'][:]
+    data=np.load(path_data)
+    label=np.load(path_label)
 
     if test_programme is not None:
         data = data[:test_programme]
@@ -137,17 +110,17 @@ def load_h5(path_h5, shuffle=False, size=None, test_programme=None, only=False):
         label = label_only
 
     data = np.uint8(np.multiply(data, 2.55))
-    label = np.uint8(np.multiply(label, 255))
+    # label = np.uint8(np.multiply(label, 255))
 
     if size is not None:
         data_resize = []
         label_resize = []
         for i in range(len(data)):
-            data_resize_single = Image.fromarray(data[i]).crop((10, 40, 190, 220))
+            data_resize_single = Image.fromarray(np.float32(data[i])).crop((10, 40, 190, 220))
             data_resize_single = data_resize_single.resize(size, Image.ANTIALIAS)
             data_resize_single = np.asarray(data_resize_single)
 
-            label_resize_single = Image.fromarray(label[i]).crop((10, 40, 190, 220))
+            label_resize_single = Image.fromarray(np.int8(label[i])).crop((10, 40, 190, 220))
             label_resize_single = label_resize_single.resize(size, Image.ANTIALIAS)
             label_resize_single = np.asarray(label_resize_single)
 
@@ -159,32 +132,10 @@ def load_h5(path_h5, shuffle=False, size=None, test_programme=None, only=False):
 
     data = data - data.min()
     data = data / data.max()
-    label = label - label.min()
-    label = label / label.max()
+    # print(Counter(label.flatten()))
 
-    if shuffle is True:
-        orders = []
-        data_output = np.zeros_like(data)
-        label_output = np.zeros_like(label)
+    return data, label
 
-        for i in range(len(data)):
-            orders.append(i)
-        random.shuffle(orders)
-        for i, order in enumerate(orders):
-            data_output[i] = data[order]
-            label_output[i] = label[order]
-    else:
-        data_output = data
-        label_output = label
-    # for i in range(500):
-    #     plt.subplot(1,2,1)
-    #     plt.imshow(data_output[i],cmap='gray')
-    #     plt.subplot(1,2,2)
-    #     plt.imshow(label_output[i],cmap='gray')
-    #     plt.pause(0.1)
-    #     print(data_output[i].max(),data_output[i].min(),label_output[i].max(),label_output[i].min())
-
-    return data_output, label_output
 
 def data_toxn(data, z):
     data_xn = np.zeros((data.shape[0], data.shape[1], data.shape[2], z))
@@ -193,64 +144,54 @@ def data_toxn(data, z):
             for j in range(z):
                 if i + j - z // 2 >= 0 and i + j - z // 2 < 189:
                     data_xn[patient * 189 + i, :, :, j] = data[patient * 189 + i + j - z // 2]
-                    print(i, i + j - z // 2)
+                    # print(i, i + j - z // 2)
                 else:
                     data_xn[patient * 189 + i, :, :, j] = np.zeros_like(data[0])
     return data_xn
 
-
 if __name__ == "__main__":
-
     start = time.time()
-    path_nii = './ATLAS_R1.1'
-    path_save = './h5'
+    path_nii = '/home//ATLAS_R1.1'
+    path_save = '/home//h5'
     ratio = 0.8
     img_size = [192, 192]
     ori_max, ori_min = nii_to_h5(path_nii, path_save, ratio=ratio)
-    data_adjust(ori_max, ori_min, path_save)
 
-    print('using :{}'.format(time.time()-start))
+    print('using :{}'.format(time.time() - start))
 
     print('loading training-data...')
     time_start = time.time()
-    original, label = load_h5(path_save + 'train_' + str(ratio), size=(img_size[1], img_size[0]),
-                              test_programme = None)
-    file = h5py.File(path_save+'/train', 'w')
+    original, label = load_h5(path_save + '/train_' + str(ratio) + 'data.npy',
+                              path_save + '/train_' + str(ratio) + 'label.npy',
+                              size=(img_size[1], img_size[0]))
+
     original = data_toxn(original, 4)
-    file.create_dataset('data', data=original)
     original = original.transpose((0, 3, 1, 2))
-    original = np.expand_dims(original, axis=-1)
-    file.create_dataset('data_lstm', data=original)
+    np.save(path_save + '/data',original)
     del original
 
-    label_change = data_toxn(label, 4)
-    file.create_dataset('label_change', data=label_change)
-    del label_change
-
-    label = np.expand_dims(label, axis=-1)
-    file.create_dataset('label', data=label)
+    label = data_toxn(label, 1)
+    label = label.transpose((0, 3, 1, 2))
+    print("train label:", Counter(label.flatten()))
+    np.save(path_save + '/label', label)
     del label
-    file.close()
-
     print('training_data done!, using:', str(time.time() - time_start) + 's\n\nloading validation-data...')
+
+    
+
     time_start = time.time()
-    original_val, label_val = load_h5(path_save + 'test_' + str(ratio), size=(img_size[1], img_size[0]))
-    file = h5py.File(path_save+'/train', 'w')
-    original_val = data_toxn(original_val, 4)
-    file.create_dataset('data_val', data=original_val)
+    original_test, label_test = load_h5(path_save + '/test_' + str(ratio) + 'data.npy',
+                              path_save + '/test_' + str(ratio) + 'label.npy',
+                                      size=(img_size[1], img_size[0]))
+    original_test = data_toxn(original_test, 4)
+    original_test = original_test.transpose((0, 3, 1, 2))
+    np.save(path_save + '/test_data', original_test)
+    del original_test
 
-    original_val = original_val.transpose((0, 3, 1, 2))
-    original_val = np.expand_dims(original_val, axis=-1)
-    file.create_dataset('data_val_lstm', data=original_val)
-    del original_val
+    label_test = data_toxn(label_test, 1)
+    label_test = label_test.transpose((0, 3, 1, 2))
+    np.save(path_save + '/test_label', label_test)
+    
+    del label_test
 
-    label_val_change = data_toxn(label_val, 4)
-    file.create_dataset('label_val_change', data=label_val_change)
-    del label_val_change
-
-    label_val = np.expand_dims(label_val, axis=-1)
-    file.create_dataset('label_val', data=label_val)
-    del label_val
-    file.close()
-
-    print('validation_data done!, using:', str(time.time() - time_start) + 's\n\n')
+    # print('validation_data done!, using:', str(time.time() - time_start) + 's\n\n')

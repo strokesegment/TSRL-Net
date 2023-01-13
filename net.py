@@ -282,7 +282,7 @@ class SideoutBlock(nn.Module):
 
 
 
-class DUnet(nn.Module):
+class tsrl_net(nn.Module):
     def __init__(self, in_channels, weights_init=True):
         super().__init__()
 
